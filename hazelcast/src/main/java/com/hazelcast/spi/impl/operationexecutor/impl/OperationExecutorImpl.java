@@ -409,26 +409,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    @Override
    @Deprecated
    public void executeOnPartitionThreads(Runnable task) {
-      checkNotNull(task, "task can't be null");
-      //TODO mimic old behaviour -> execute for each group
-      final int groups = this.groupLock.groups();
-      for(int groupIndex = 0;groupIndex<groups;groupIndex++){
-         executeOnGroupId(task,groupIndex);
-      }
-   }
-
-   private void executeOnGroupId(final Runnable task, final int groupIndex){
-      final Thread currentThread = Thread.currentThread();
-      while(!groupLock.tryLock(groupIndex)){
-         if(currentThread.isInterrupted()){
-            throw new IllegalStateException("can't execute the task if interrupted!");
-         }
-      }
-      try{
-         task.run();
-      }finally{
-         this.groupLock.unlock(groupIndex);
-      }
+      throw new UnsupportedOperationException("executeOnPartitionThreads is no longer supported!");
    }
 
    @Override
