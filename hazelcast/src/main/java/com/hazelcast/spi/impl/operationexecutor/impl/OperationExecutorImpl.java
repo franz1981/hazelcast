@@ -300,7 +300,9 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
 
    @Override
    @Probe(name = "partitionThreadCount")
-   public int getPartitionThreadCount() { return this.groupLock.groups(); }
+   public int getPartitionThreadCount() {
+      return this.groupLock.groups();
+   }
 
    @Override
    @Probe(name = "genericThreadCount")
@@ -322,20 +324,21 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          genericQueue.add(op, priority);
       }
       else {
-         final int groupIndex = groupIndex(partitionId,groupsMask);
+         final int groupIndex = groupIndex(partitionId, groupsMask);
          final Thread currentThread = Thread.currentThread();
-         while(!groupLock.tryLock(groupIndex)){
-            if(currentThread.isInterrupted()){
+         while (!groupLock.tryLock(groupIndex)) {
+            if (currentThread.isInterrupted()) {
                throw new IllegalStateException("can't execute the task if interrupted!");
             }
          }
          OperationRunner operationRunner = null;
-         try{
+         try {
             operationRunner = partitionOperationRunners[partitionId];
             operationRunner.setCurrentThread(currentThread);
             operationRunner.run(op);
-         }finally{
-            if(operationRunner!=null) {
+         }
+         finally {
+            if (operationRunner != null) {
                operationRunner.setCurrentThread(null);
             }
             this.groupLock.unlock(groupIndex);
@@ -352,20 +355,21 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          genericQueue.add(task, priority);
       }
       else {
-         final int groupIndex = groupIndex(partitionId,groupsMask);
+         final int groupIndex = groupIndex(partitionId, groupsMask);
          final Thread currentThread = Thread.currentThread();
-         while(!groupLock.tryLock(groupIndex)){
-            if(currentThread.isInterrupted()){
+         while (!groupLock.tryLock(groupIndex)) {
+            if (currentThread.isInterrupted()) {
                throw new IllegalStateException("can't execute the task if interrupted!");
             }
          }
          OperationRunner operationRunner = null;
-         try{
+         try {
             operationRunner = partitionOperationRunners[partitionId];
             operationRunner.setCurrentThread(currentThread);
             operationRunner.run(task);
-         }finally{
-            if(operationRunner!=null) {
+         }
+         finally {
+            if (operationRunner != null) {
                operationRunner.setCurrentThread(null);
             }
             this.groupLock.unlock(groupIndex);
@@ -382,10 +386,10 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          genericQueue.add(packet, priority);
       }
       else {
-         final int groupIndex = groupIndex(partitionId,groupsMask);
+         final int groupIndex = groupIndex(partitionId, groupsMask);
          final Thread currentThread = Thread.currentThread();
-         while(!groupLock.tryLock(groupIndex)){
-            if(currentThread.isInterrupted()){
+         while (!groupLock.tryLock(groupIndex)) {
+            if (currentThread.isInterrupted()) {
                throw new IllegalStateException("can't execute the task if interrupted!");
             }
          }
@@ -394,11 +398,13 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             operationRunner = partitionOperationRunners[partitionId];
             operationRunner.setCurrentThread(currentThread);
             operationRunner.run(packet);
-         }catch (Throwable t){
+         }
+         catch (Throwable t) {
             inspectOutOfMemoryError(t);
             logger.severe("Failed to process packet: " + packet + " on " + currentThread, t);
-         }finally{
-            if(operationRunner!=null) {
+         }
+         finally {
+            if (operationRunner != null) {
                operationRunner.setCurrentThread(null);
             }
             this.groupLock.unlock(groupIndex);
@@ -431,7 +437,8 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          if (!(currentThread instanceof OperationThread)) {
             // if thread is not an operation thread, we return the adHocOperationRunner
             operationRunner = adHocOperationRunner;
-         }else {
+         }
+         else {
             // It is a generic operation and we are running on an operation-thread. So we can just return the operation-runner
             // for that thread. There won't be any partition-conflict since generic operations are allowed to be executed by
             // a partition-specific operation-runner.
@@ -441,18 +448,41 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          //TODO verify corner case
          //if the operationRunner is related to a specific partitionId it needs to be guarded by the group lock?
          final int runnerPartitionId = operationRunner.getPartitionId();
-         if(runnerPartitionId<0){
+         if (runnerPartitionId < 0) {
             operationRunner.run(operation);
-         }else{
-            executeOnPartition(operation,runnerPartitionId,operationRunner);
          }
-      }else {
+         else {
+            executeOnPartition(operation, runnerPartitionId, operationRunner);
+         }
+      }
+      else {
          final OperationRunner operationRunner = partitionOperationRunners[partitionId];
-         executeOnPartition(operation,partitionId,operationRunner);
+         executeOnPartition(operation, partitionId, operationRunner);
       }
    }
 
-   private void executeOnPartition(final Operation operation,final int partitionId,final OperationRunner operationRunner){
+   @Deprecated
+   OperationRunner getOperationRunner(Operation operation) {
+      checkNotNull(operation, "operation can't be null");
+      if (operation.getPartitionId() >= 0) {
+         // retrieving an OperationRunner for a partition specific operation is easy; we can just use the partition id.
+         return partitionOperationRunners[operation.getPartitionId()];
+      }
+      Thread currentThread = Thread.currentThread();
+      if (!(currentThread instanceof OperationThread)) {
+         // if thread is not an operation thread, we return the adHocOperationRunner
+         return adHocOperationRunner;
+      }
+      // It is a generic operation and we are running on an operation-thread. So we can just return the operation-runner
+      // for that thread. There won't be any partition-conflict since generic operations are allowed to be executed by
+      // a partition-specific operation-runner.
+      OperationThread operationThread = (OperationThread) currentThread;
+      return operationThread.currentRunner;
+   }
+
+   private void executeOnPartition(final Operation operation,
+                                   final int partitionId,
+                                   final OperationRunner operationRunner) {
       final int groupIndex = groupIndex(partitionId, groupsMask);
       final Thread currentThread = Thread.currentThread();
       while (!groupLock.tryLock(groupIndex)) {
@@ -507,7 +537,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    // public for testing purposes
    @Deprecated
    public int toPartitionThreadIndex(int partitionId) {
-      return groupIndex(partitionId,groupsMask);
+      return groupIndex(partitionId, groupsMask);
    }
 
    @Override
