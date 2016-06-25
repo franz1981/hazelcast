@@ -321,6 +321,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
 
    @Override
    @Probe(name = "partitionThreadCount")
+   @Deprecated
    public int getPartitionThreadCount() {
       return this.groupLock.groups();
    }
