@@ -16,6 +16,14 @@ final class ReentrantGroupLock {
       this.groupLocks = new SparsePaddedAtomicIntegerArray(groups);
    }
 
+   public final boolean isAcquired(final int index){
+      return groupLocks.get(index)>0;
+   }
+
+   public final boolean isReleased(final int index){
+      return groupLocks.get(index)==0;
+   }
+
    public final int groupAccesses(final int index) {
       final byte[] threadGroupAccesses = this.groupAccesses.get();
       final int groupAccessCount = threadGroupAccesses[index] & 255;

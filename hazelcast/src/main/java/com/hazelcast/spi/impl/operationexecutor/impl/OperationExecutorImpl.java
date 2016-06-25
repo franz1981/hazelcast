@@ -17,6 +17,7 @@
 package com.hazelcast.spi.impl.operationexecutor.impl;
 
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import com.hazelcast.instance.HazelcastThreadGroup;
 import com.hazelcast.instance.NodeExtension;
@@ -148,6 +149,26 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             Thread.currentThread().interrupt();
          }
       }
+   }
+
+   private static void awaitGroupsLockRelease(ReentrantGroupLock groupLock){
+      final int groups = groupLock.groups();
+      final long startWait = System.nanoTime();
+      final long timeoutInNanos = TimeUnit.SECONDS.toNanos(TERMINATION_TIMEOUT_SECONDS);
+      final long limitWait = startWait+timeoutInNanos;
+      int lockedGroups = 0;
+      while(lockedGroups>0 && System.nanoTime()<limitWait){
+         lockedGroups = 0;
+         for(int i = 0;i<groups;i++){
+            if(!groupLock.isAcquired(i)){
+               lockedGroups++;
+            }
+         }
+      }
+      if(lockedGroups>0){
+         throw new IllegalStateException("exists " + lockedGroups + " locked groups after" +  TERMINATION_TIMEOUT_SECONDS + " seconds");
+      }
+
    }
 
    private OperationRunner[] initPartitionOperationRunners(HazelcastProperties properties,
@@ -549,9 +570,9 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    @Override
    public void shutdown() {
       shutdownAll(genericThreads);
-      //TODO wait until all the group lock are released or check if they are released and throw an exception if not?
-
       awaitTermination(genericThreads);
+      //TODO wait until all the group lock are released or check if they are released and throw an exception if not?
+      awaitGroupsLockRelease(groupLock);
    }
 
    @Override
