@@ -143,7 +143,7 @@ public class OperationThreadTest extends OperationExecutorImpl_AbstractTest {
     private PartitionOperationThread createNewOperationThread(OperationQueue mockOperationQueue) {
         ILogger mockLogger = mock(ILogger.class);
         OperationRunner[] runners = new OperationRunner[0];
-        PartitionOperationThread thread = new PartitionOperationThread("threadName", 0, mockOperationQueue, mockLogger, threadGroup, nodeExtension, runners);
+        PartitionOperationThread thread = new PartitionOperationThread("threadName", 0, mockOperationQueue, mockLogger, threadGroup, nodeExtension, runners, WaitStrategies.Sleeping, new ReentrantGroupLock(Runtime.getRuntime().availableProcessors()), PartitionGroupMappers.maskWith(Runtime.getRuntime().availableProcessors()-1));
 
         return thread;
     }

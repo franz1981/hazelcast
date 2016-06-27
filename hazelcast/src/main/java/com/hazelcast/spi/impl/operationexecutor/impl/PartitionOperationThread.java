@@ -20,6 +20,9 @@ import com.hazelcast.instance.HazelcastThreadGroup;
 import com.hazelcast.instance.NodeExtension;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.logging.ILogger;
+import com.hazelcast.nio.Packet;
+import com.hazelcast.spi.Operation;
+import com.hazelcast.spi.impl.PartitionSpecificRunnable;
 import com.hazelcast.spi.impl.operationexecutor.OperationRunner;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -28,33 +31,130 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
  */
 public final class PartitionOperationThread extends OperationThread {
 
-    private final OperationRunner[] partitionOperationRunners;
+   private final OperationRunner[] partitionOperationRunners;
+   private final ReentrantGroupLock groupLock;
+   private final PartitionGroupMapper partitionGroupMapper;
+   private final WaitStrategy waitStrategy;
+   @SuppressFBWarnings("EI_EXPOSE_REP")
+   public PartitionOperationThread(String name,
+                                   int threadId,
+                                   OperationQueue queue,
+                                   ILogger logger,
+                                   HazelcastThreadGroup threadGroup,
+                                   NodeExtension nodeExtension,
+                                   OperationRunner[] partitionOperationRunners,
+                                   WaitStrategy waitStrategy,
+                                   ReentrantGroupLock groupLock,
+                                   PartitionGroupMapper partitionGroupMapper) {
+      super(name, threadId, queue, logger, threadGroup, nodeExtension, false);
+      this.partitionOperationRunners = partitionOperationRunners;
+      this.groupLock = groupLock;
+      this.partitionGroupMapper = partitionGroupMapper;
+      this.waitStrategy = waitStrategy;
+   }
 
-    @SuppressFBWarnings("EI_EXPOSE_REP")
-    public PartitionOperationThread(String name, int threadId,
-                                    OperationQueue queue, ILogger logger,
-                                    HazelcastThreadGroup threadGroup, NodeExtension nodeExtension,
-                                    OperationRunner[] partitionOperationRunners) {
-        super(name, threadId, queue, logger, threadGroup, nodeExtension, false);
-        this.partitionOperationRunners = partitionOperationRunners;
-    }
+   /**
+    * For each partition there is a {@link com.hazelcast.spi.impl.operationexecutor.OperationRunner} instance. So we need to
+    * find the right one based on the partition-id.
+    */
+   @Override
+   public OperationRunner getOperationRunner(int partitionId) {
+      return partitionOperationRunners[partitionId];
+   }
 
-    /**
-     * For each partition there is a {@link com.hazelcast.spi.impl.operationexecutor.OperationRunner} instance. So we need to
-     * find the right one based on the partition-id.
-     */
-    @Override
-    public OperationRunner getOperationRunner(int partitionId) {
-        return partitionOperationRunners[partitionId];
-    }
+   protected final void runWithCurrentRunner(final Packet packet) throws Exception {
+      final int partitionId = packet.getPartitionId();
+      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
+      int idleCounter = 0;
+      boolean run = false;
+      while (!isInterrupted() && !run) {
+         if (!groupLock.tryLock(groupId)) {
+            idleCounter = waitStrategy.idle(idleCounter);
+         }
+         else {
+            try {
+               super.runWithCurrentRunner(packet);
+            }
+            finally {
+               groupLock.unlock(groupId);
+               idleCounter = 0;
+               run = true;
+            }
+         }
+      }
+      if (!run) {
+         throw new IllegalStateException("interrupted while performing a spin lock!");
+      }
+   }
 
-    @Probe
-    int priorityPendingCount() {
-        return queue.prioritySize();
-    }
+   protected final void runWithCurrentRunner(final Operation operation) {
+      final int partitionId = operation.getPartitionId();
+      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
+      int idleCounter = 0;
+      boolean run = false;
+      while (!isInterrupted() && !run) {
+         if (!groupLock.tryLock(groupId)) {
+            idleCounter = waitStrategy.idle(idleCounter);
+         }
+         else {
+            try {
+               super.runWithCurrentRunner(operation);
+            }
+            finally {
+               groupLock.unlock(groupId);
+               idleCounter = 0;
+               run = true;
+            }
+         }
+      }
+      if (!run) {
+         throw new IllegalStateException("interrupted while performing a spin lock!");
+      }
 
-    @Probe
-    int normalPendingCount() {
-        return queue.normalSize();
-    }
+   }
+
+   protected final void runWithCurrentRunner(final PartitionSpecificRunnable partitionRunnable) {
+      final int partitionId = partitionRunnable.getPartitionId();
+      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
+      int idleCounter = 0;
+      boolean run = false;
+      while (!isInterrupted() && !run) {
+         if (!groupLock.tryLock(groupId)) {
+            idleCounter = waitStrategy.idle(idleCounter);
+         }
+         else {
+            try {
+               super.runWithCurrentRunner(partitionRunnable);
+            }
+            finally {
+               groupLock.unlock(groupId);
+               idleCounter = 0;
+               run = true;
+            }
+         }
+      }
+      if (!run) {
+         throw new IllegalStateException("interrupted while performing a spin lock!");
+      }
+   }
+
+   @Probe
+   int priorityPendingCount() {
+      return queue.prioritySize();
+   }
+
+   @Probe
+   int normalPendingCount() {
+      return queue.normalSize();
+   }
+
+   public static interface PartitionGroupMapper {
+
+      int groupIdOf(int partitionId);
+   }
+
+   public static interface WaitStrategy {
+
+      int idle(int idleCounter);
+   }
 }
