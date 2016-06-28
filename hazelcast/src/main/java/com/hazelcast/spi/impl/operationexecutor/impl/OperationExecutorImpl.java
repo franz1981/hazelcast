@@ -447,7 +447,6 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
                }
             }
             else {
-               //TODO why not try to acquire other groups locks and then fallback to an execute?
                throw new IllegalThreadStateException("Can't call run from " + currentThread.getName() + " for:" + operation);
             }
          }
@@ -543,7 +542,6 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
                }
             }
             else {
-               //TODO why not try to acquire other groups locks and then fallback to an execute?
                throw new IllegalThreadStateException("Can't call runOrExecute from " + currentThread.getName() + " for:" + operation);
             }
          }
@@ -607,7 +605,6 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
                return true;
             }
             else {
-               //TODO why not try to acquire other groups locks and then fallback to an execute?
                return false;
             }
          }
