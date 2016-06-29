@@ -204,7 +204,7 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
         OperationRunner[] operationRunners = new OperationRunner[]{operationRunner};
 
         return new PartitionOperationThread("threadName", 0, queue, LOGGER, hazelcastThreadGroup,
-                                            nodeExtension, operationRunners, WaitStrategies.Sleeping, new ReentrantGroupLock(Runtime.getRuntime().availableProcessors()), PartitionGroupMappers.maskWith(Runtime.getRuntime().availableProcessors()-1));
+                                            nodeExtension, operationRunners, WaitStrategies.Sleeping, new ReentrantGroupLock(271), PartitionGroupMappers.maps(271,271));
     }
 
     private static class TestMapInterceptor implements MapInterceptor {

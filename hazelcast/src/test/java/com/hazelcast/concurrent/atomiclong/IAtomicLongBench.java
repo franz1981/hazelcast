@@ -22,14 +22,14 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import static com.hazelcast.spi.properties.GroupProperty.PARTITION_OPERATION_THREAD_COUNT;
+import static com.hazelcast.spi.properties.GroupProperty.PARTITION_GROUP_COUNT;
 
 @State(Scope.Group)
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
 public class IAtomicLongBench extends HazelcastTestSupport {
 
-   private static final int CONSUMERS = 4;
+   private static final int CONSUMERS = 8;
 
    private static final AtomicInteger THREAD_INDEX = new AtomicInteger(0);
 
@@ -61,8 +61,7 @@ public class IAtomicLongBench extends HazelcastTestSupport {
       //PARTITION_OPERATION_THREAD_COUNT is the hazelcast property to be set to decide the partitions group count
       counters = new IAtomicLong[CONSUMERS];
       final Config config = getConfig();
-      final int coreSize = Runtime.getRuntime().availableProcessors();
-      config.setProperty(PARTITION_OPERATION_THREAD_COUNT.getName(),Long.toString(coreSize));
+      config.setProperty(PARTITION_GROUP_COUNT.getName(),Integer.toString(271));
       instance = createHazelcastInstanceFactory().newHazelcastInstance(config);
       final int groupSize = MAX_PARTITION_COUNT/CONSUMERS;
       for(int i = 0;i<CONSUMERS;i++) {

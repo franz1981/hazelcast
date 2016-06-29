@@ -44,6 +44,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import static com.hazelcast.internal.metrics.ProbeLevel.MANDATORY;
 import static com.hazelcast.spi.properties.GroupProperty.GENERIC_OPERATION_THREAD_COUNT;
 import static com.hazelcast.spi.properties.GroupProperty.PARTITION_COUNT;
+import static com.hazelcast.spi.properties.GroupProperty.PARTITION_GROUP_COUNT;
 import static com.hazelcast.spi.properties.GroupProperty.PARTITION_OPERATION_THREAD_COUNT;
 import static com.hazelcast.spi.properties.GroupProperty.PRIORITY_GENERIC_OPERATION_THREAD_COUNT;
 import static com.hazelcast.util.Preconditions.checkNotNull;
@@ -91,7 +92,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    private final int priorityThreadCount;
 
    private final ReentrantGroupLock groupLock;
-   private final int groupMask;
+   private final PartitionOperationThread.PartitionGroupMapper partitionGroupMapper;
 
    public OperationExecutorImpl(HazelcastProperties properties,
                                 LoggingService loggerService,
@@ -104,28 +105,14 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       this.logger = loggerService.getLogger(OperationExecutorImpl.class);
 
       this.adHocOperationRunner = operationRunnerFactory.createAdHocRunner();
-
       this.partitionOperationRunners = initPartitionOperationRunners(properties, operationRunnerFactory);
       this.groupLock = initPartitionGroupLock(properties);
-      this.groupMask = groupLock.groups() - 1;
-      this.partitionThreads = initPartitionThreads(properties, threadGroup, nodeExtension, WaitStrategies.Sleeping, PartitionGroupMappers.maskWith(groupMask));
+      this.partitionGroupMapper = PartitionGroupMappers.maps(this.groupLock.groups(),properties.getInteger(PARTITION_COUNT));
+      this.partitionThreads = initPartitionThreads(properties, threadGroup, nodeExtension, WaitStrategies.Sleeping, partitionGroupMapper);
 
       this.priorityThreadCount = properties.getInteger(PRIORITY_GENERIC_OPERATION_THREAD_COUNT);
       this.genericOperationRunners = initGenericOperationRunners(properties, operationRunnerFactory);
       this.genericThreads = initGenericThreads(threadGroup, nodeExtension);
-   }
-
-   private static final int groupIndex(int partitionId, int groupsMask) {
-      return partitionId & groupsMask;
-   }
-
-   //TODO Add tests and find a proper util class to put it
-   private static int nextPowOfTwo(final int value) {
-      if (value > (1 << 30)) {
-         throw new IllegalArgumentException("next pow of 2 cannot exceeds 2^31!");
-      }
-      final int nextPow2 = 1 << (32 - Integer.numberOfLeadingZeros(value - 1));
-      return nextPow2;
    }
 
    private static int getRunningOperationCount(OperationRunner[] runners) {
@@ -188,14 +175,12 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    }
 
    private ReentrantGroupLock initPartitionGroupLock(HazelcastProperties properties) {
-      //use old
-      int groupsCount = properties.getInteger(PARTITION_OPERATION_THREAD_COUNT);
-      if (groupsCount <= 0) {
-         groupsCount = Runtime.getRuntime().availableProcessors();
+      int partitionGroupCount = properties.getInteger(PARTITION_GROUP_COUNT);
+      System.out.println(partitionGroupCount);
+      if (partitionGroupCount <= 0) {
+         partitionGroupCount = properties.getInteger(PARTITION_COUNT);
       }
-      //approx to next pow2 value to enable fast mod operation
-      groupsCount = nextPowOfTwo(groupsCount);
-      return new ReentrantGroupLock(groupsCount);
+      return new ReentrantGroupLock(partitionGroupCount);
    }
 
    private PartitionOperationThread[] initPartitionThreads(HazelcastProperties properties,
@@ -430,7 +415,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             throw new IllegalThreadStateException("Can't call run from " + currentThread.getName() + " for:" + operation);
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             //could require the reentrant lock only when the current thread already owns that partitions group
             if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
                final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
@@ -470,7 +455,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             operationRunner.run(operation);
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
             if (this.groupLock.tryLock(operationGroupIndex)) {
                try {
@@ -525,7 +510,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             throw new IllegalThreadStateException("Can't call runOrExecute from " + currentThread.getName() + " for:" + operation);
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             //could require the reentrant lock only when the current thread already owns that partitions group
             if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
                final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
@@ -565,7 +550,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             operationRunner.run(operation);
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
             if (this.groupLock.tryLock(operationGroupIndex)) {
                try {
@@ -599,7 +584,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             return false;
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             //could require the reentrant lock only when the current thread already owns that partitions group
             if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
                return true;
@@ -616,7 +601,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
             return true;
          }
          else {
-            final int operationGroupIndex = groupIndex(operationPartitionId, groupMask);
+            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
             //TODO too optimistic? a subsequent run could fail anyway due to contention with other threads
             return this.groupLock.isReleased(operationGroupIndex);
          }
@@ -646,7 +631,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       }
       //exists any acquired group of partitions?
       if (groupLock.groupAccessesCount() > 0) {
-         final int operationPartitionGroupId = groupIndex(operationPartitionId, groupMask);
+         final int operationPartitionGroupId = this.partitionGroupMapper.groupIdOf(operationPartitionId);
          final int accessesPerPartitionGroupId = this.groupLock.groupAccesses(operationPartitionGroupId);
          //the acquired group of partitions contains the requested operation's partitionId?
          return accessesPerPartitionGroupId > 0;
