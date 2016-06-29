@@ -78,7 +78,14 @@ public final class ReentrantGroupLock {
       if (threadGroupAccesses != null) {
          final int groupAccessCount = threadGroupAccesses[index] & 255;
          if (groupAccessCount > 0) {
-            return tryReentrantLock(index,groupAccessCount,threadGroupAccesses,groupAccessTotalCount);
+            tryReentrantLock(index,groupAccessCount,threadGroupAccesses,groupAccessTotalCount);
+            final int nextGroupAccessCount = groupAccessCount + 1;
+            if (nextGroupAccessCount > 255) {
+               throw new IllegalStateException("reached the maximum reentrant count!");
+            }
+            threadGroupAccesses[index] = (byte) nextGroupAccessCount;
+            groupAccessTotalCount.value++;
+            return true;
          }
          else {
             //TODO MEASURE!! try to perform a wait-free (if supported) atomic increment -> scale better when contended?
