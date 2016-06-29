@@ -93,6 +93,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
 
    private final ReentrantGroupLock groupLock;
    private final PartitionOperationThread.PartitionGroupMapper partitionGroupMapper;
+   private final int partitionThreadsLength;
 
    public OperationExecutorImpl(HazelcastProperties properties,
                                 LoggingService loggerService,
@@ -107,9 +108,9 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       this.adHocOperationRunner = operationRunnerFactory.createAdHocRunner();
       this.partitionOperationRunners = initPartitionOperationRunners(properties, operationRunnerFactory);
       this.groupLock = initPartitionGroupLock(properties);
-      this.partitionGroupMapper = PartitionGroupMappers.maps(this.groupLock.groups(),properties.getInteger(PARTITION_COUNT));
+      this.partitionGroupMapper = PartitionGroupMappers.maps(this.groupLock.groups(), properties.getInteger(PARTITION_COUNT));
       this.partitionThreads = initPartitionThreads(properties, threadGroup, nodeExtension, WaitStrategies.Sleeping, partitionGroupMapper);
-
+      this.partitionThreadsLength = this.partitionThreads.length;
       this.priorityThreadCount = properties.getInteger(PRIORITY_GENERIC_OPERATION_THREAD_COUNT);
       this.genericOperationRunners = initGenericOperationRunners(properties, operationRunnerFactory);
       this.genericThreads = initGenericThreads(threadGroup, nodeExtension);
@@ -176,7 +177,6 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
 
    private ReentrantGroupLock initPartitionGroupLock(HazelcastProperties properties) {
       int partitionGroupCount = properties.getInteger(PARTITION_GROUP_COUNT);
-      System.out.println(partitionGroupCount);
       if (partitionGroupCount <= 0) {
          partitionGroupCount = properties.getInteger(PARTITION_COUNT);
       }
@@ -339,7 +339,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
    @Override
    @Probe(name = "partitionThreadCount")
    public int getPartitionThreadCount() {
-      return partitionThreads.length;
+      return partitionThreadsLength;
    }
 
    @Override
@@ -377,7 +377,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
          genericQueue.add(task, priority);
       }
       else {
-         OperationThread partitionThread = partitionThreads[toPartitionThreadIndex(partitionId)];
+         OperationThread partitionThread = partitionThreads[toPartitionThreadIndex(partitionId,partitionThreadsLength)];
          partitionThread.queue.add(task, priority);
       }
    }
@@ -398,6 +398,50 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       }
    }
 
+   private void ownedLockRun(final Operation operation) {
+      //could be run only already acquired groups of partitions with specific partition operations -> avoid liveness failures
+      final int operationPartitionId = operation.getPartitionId();
+      if (operationPartitionId < 0) {
+         throw new IllegalThreadStateException("Can't call run from " + Thread.currentThread().getName() + " for:" + operation);
+      }
+      else {
+         final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
+         //could require the reentrant lock only when the current thread already owns that partitions group
+         if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
+            final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
+            if (this.groupLock.tryLock(operationGroupIndex)) {
+               try {
+                  operationRunner.run(operation);
+               }
+               finally {
+                  this.groupLock.unlock(operationGroupIndex);
+               }
+            }
+            else {
+               throw new IllegalStateException("This state is IMPOSSIBLE...the lock is already acquired by the thread..");
+            }
+         }
+         else {
+            throw new IllegalThreadStateException("Can't call run from " + Thread.currentThread().getName() + " for:" + operation);
+         }
+      }
+   }
+
+   private void notOwnedLockGenericOperationRun(final Operation operation, final Thread currentThread) {
+      //user thread or partition thread without any group locks
+      final OperationRunner operationRunner;
+      //NO NEED TO CHECK AGAINST Partition Thread ->
+      //a currentRunner exists only when there is a at least a partition group lock!
+      if (!(currentThread instanceof GenericOperationThread)) {
+         operationRunner = adHocOperationRunner;
+      }
+      else {
+         final GenericOperationThread operationThread = (GenericOperationThread) currentThread;
+         operationRunner = operationThread.getOperationRunner(-1);
+      }
+      operationRunner.run(operation);
+   }
+
    @Override
    public void run(final Operation operation) {
       checkNotNull(operation, "operation can't be null");
@@ -409,50 +453,13 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       final int groupAccessesCount = this.groupLock.groupAccessesCount();
       //the count of the current thread groups locks acquired
       if (groupAccessesCount > 0) {
-         //could be run only already acquired groups of partitions with specific partition operations -> avoid liveness failures
-         final int operationPartitionId = operation.getPartitionId();
-         if (operationPartitionId < 0) {
-            throw new IllegalThreadStateException("Can't call run from " + currentThread.getName() + " for:" + operation);
-         }
-         else {
-            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
-            //could require the reentrant lock only when the current thread already owns that partitions group
-            if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
-               final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
-               if (this.groupLock.tryLock(operationGroupIndex)) {
-                  try {
-                     operationRunner.run(operation);
-                  }
-                  finally {
-                     this.groupLock.unlock(operationGroupIndex);
-                  }
-               }
-               else {
-                  throw new IllegalStateException("This state is IMPOSSIBLE...the lock is already acquired by the thread..");
-               }
-            }
-            else {
-               throw new IllegalThreadStateException("Can't call run from " + currentThread.getName() + " for:" + operation);
-            }
-         }
+         ownedLockRun(operation);
       }
       else {
          //there is no group locks acquired
          final int operationPartitionId = operation.getPartitionId();
          if (operationPartitionId < 0) {
-            //user thread or partition thread without any group locks
-            final OperationRunner operationRunner;
-            //NO NEED TO CHECK AGAINST Partition Thread ->
-            //a currentRunner exists only when there is a at least a partition group lock!
-            if (!(currentThread instanceof GenericOperationThread)) {
-               operationRunner = adHocOperationRunner;
-            }
-            else {
-               //it can be either a Partition Thread running a Runnable or
-               final GenericOperationThread operationThread = (GenericOperationThread) currentThread;
-               operationRunner = operationThread.getOperationRunner(-1);
-            }
-            operationRunner.run(operation);
+            notOwnedLockGenericOperationRun(operation, currentThread);
          }
          else {
             final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
@@ -494,6 +501,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       return operationRunner;
    }
 
+
    @Override
    public void runOrExecute(final Operation operation) {
       final Thread currentThread = Thread.currentThread();
@@ -504,50 +512,13 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       final int groupAccessesCount = this.groupLock.groupAccessesCount();
       //the count of the current thread groups locks acquired
       if (groupAccessesCount > 0) {
-         //could be run only already acquired groups of partitions with specific partition operations -> avoid liveness failures
-         final int operationPartitionId = operation.getPartitionId();
-         if (operationPartitionId < 0) {
-            throw new IllegalThreadStateException("Can't call runOrExecute from " + currentThread.getName() + " for:" + operation);
-         }
-         else {
-            final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
-            //could require the reentrant lock only when the current thread already owns that partitions group
-            if (this.groupLock.groupAccesses(operationGroupIndex) > 0) {
-               final OperationRunner operationRunner = this.partitionOperationRunners[operationPartitionId];
-               if (this.groupLock.tryLock(operationGroupIndex)) {
-                  try {
-                     operationRunner.run(operation);
-                  }
-                  finally {
-                     this.groupLock.unlock(operationGroupIndex);
-                  }
-               }
-               else {
-                  throw new IllegalStateException("This state is IMPOSSIBLE...the lock is already acquired by the thread..");
-               }
-            }
-            else {
-               throw new IllegalThreadStateException("Can't call runOrExecute from " + currentThread.getName() + " for:" + operation);
-            }
-         }
+         ownedLockRun(operation);
       }
       else {
          //there is no group locks acquired
          final int operationPartitionId = operation.getPartitionId();
          if (operationPartitionId < 0) {
-            //user thread or partition thread without any group locks
-            final OperationRunner operationRunner;
-            //NO NEED TO CHECK AGAINST Partition Thread ->
-            //a currentRunner exists only when there is a at least a partition group lock!
-            if (!(currentThread instanceof GenericOperationThread)) {
-               operationRunner = adHocOperationRunner;
-            }
-            else {
-               //it can be either a Partition Thread running a Runnable or
-               final GenericOperationThread operationThread = (GenericOperationThread) currentThread;
-               operationRunner = operationThread.getOperationRunner(-1);
-            }
-            operationRunner.run(operation);
+            notOwnedLockGenericOperationRun(operation,currentThread);
          }
          else {
             final int operationGroupIndex = this.partitionGroupMapper.groupIdOf(operationPartitionId);
@@ -561,7 +532,7 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
                }
             }
             else {
-               partitionThreads[toPartitionThreadIndex(operationPartitionId)].queue.add(operation, operation.isUrgent());
+               partitionThreads[toPartitionThreadIndex(operationPartitionId,partitionThreadsLength)].queue.add(operation, operation.isUrgent());
             }
          }
       }
@@ -638,19 +609,22 @@ public final class OperationExecutorImpl implements OperationExecutor, MetricsPr
       }
       else {
          //the operation is bounded correctly with its correct partition thread...
-         final PartitionOperationThread partitionOperationThread = this.partitionThreads[toPartitionThreadIndex(operationPartitionId)];
+         final PartitionOperationThread partitionOperationThread = this.partitionThreads[toPartitionThreadIndex(operationPartitionId,partitionThreadsLength)];
          return (partitionOperationThread == currentThread);
       }
    }
 
-   // public for testing purposes
-   public int toPartitionThreadIndex(int partitionId) {
-      return partitionId % partitionThreads.length;
+   private static int toPartitionThreadIndex(int partitionId,int partitionThreadsLength) {
+      return partitionId % partitionThreadsLength;
+   }
+
+   public int toPartitionThreadIndex(int partitionId){
+      return toPartitionThreadIndex(partitionId,partitionThreadsLength);
    }
 
    @Override
    public void start() {
-      logger.info("Starting " + partitionThreads.length + " partition threads");
+      logger.info("Starting " + partitionThreadsLength + " partition threads");
       startAll(partitionThreads);
 
       logger.info("Starting " + genericThreads.length + " generic threads (" + priorityThreadCount + " dedicated for priority tasks)");
