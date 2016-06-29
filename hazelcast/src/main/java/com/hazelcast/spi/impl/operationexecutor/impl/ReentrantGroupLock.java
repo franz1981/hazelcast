@@ -42,19 +42,43 @@ public final class ReentrantGroupLock {
       return this.groupLocks.length();
    }
 
+   private boolean tryLockFirstTime(final int index){
+      //TODO MEASURE!! try to perform a wait-free (if supported) atomic increment -> scale better when contended?
+      //it succeed only if is the first different thread that try to enter
+      if (groupLocks.getAndIncrement(index) == 0) {
+
+         final byte[] threadGroupAccesses = new byte[groupLocks.length()];
+         threadGroupAccesses[index] = 1;
+         this.groupAccesses.set(threadGroupAccesses);
+
+         final MutableInteger groupAccessTotalCount = new MutableInteger();
+         groupAccessTotalCount.value = 1;
+         this.groupAccessesCount.set(groupAccessTotalCount);
+
+         return true;
+      }
+      else {
+         return false;
+      }
+   }
+
+   private final boolean tryReentrantLock(final int index, final int groupAccessCount, final byte[] threadGroupAccesses, final MutableInteger groupAccessTotalCount){
+      final int nextGroupAccessCount = groupAccessCount + 1;
+      if (nextGroupAccessCount > 255) {
+         throw new IllegalStateException("reached the maximum reentrant count!");
+      }
+      threadGroupAccesses[index] = (byte) nextGroupAccessCount;
+      groupAccessTotalCount.value++;
+      return true;
+   }
+
    public final boolean tryLock(final int index) {
       byte[] threadGroupAccesses = this.groupAccesses.get();
       MutableInteger groupAccessTotalCount = this.groupAccessesCount.get();
       if (threadGroupAccesses != null) {
          final int groupAccessCount = threadGroupAccesses[index] & 255;
          if (groupAccessCount > 0) {
-            final int nextGroupAccessCount = groupAccessCount + 1;
-            if (nextGroupAccessCount > 255) {
-               throw new IllegalStateException("reached the maximum reentrant count!");
-            }
-            threadGroupAccesses[index] = (byte) nextGroupAccessCount;
-            groupAccessTotalCount.value++;
-            return true;
+            return tryReentrantLock(index,groupAccessCount,threadGroupAccesses,groupAccessTotalCount);
          }
          else {
             //TODO MEASURE!! try to perform a wait-free (if supported) atomic increment -> scale better when contended?
@@ -70,23 +94,7 @@ public final class ReentrantGroupLock {
          }
       }
       else {
-         //TODO MEASURE!! try to perform a wait-free (if supported) atomic increment -> scale better when contended?
-         //it succeed only if is the first different thread that try to enter
-         if (groupLocks.getAndIncrement(index) == 0) {
-
-            threadGroupAccesses = new byte[groupLocks.length()];
-            threadGroupAccesses[index] = 1;
-            this.groupAccesses.set(threadGroupAccesses);
-
-            groupAccessTotalCount = new MutableInteger();
-            groupAccessTotalCount.value = 1;
-            this.groupAccessesCount.set(groupAccessTotalCount);
-
-            return true;
-         }
-         else {
-            return false;
-         }
+         return tryLockFirstTime(index);
       }
    }
 
