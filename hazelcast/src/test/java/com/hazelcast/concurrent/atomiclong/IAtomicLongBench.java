@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.IAtomicLong;
+import com.hazelcast.internal.util.ThreadLocalRandom;
 import com.hazelcast.test.HazelcastTestSupport;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -22,14 +23,14 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import static com.hazelcast.spi.properties.GroupProperty.PARTITION_GROUP_COUNT;
+import static com.hazelcast.spi.properties.GroupProperty.PARTITION_COUNT;
 
 @State(Scope.Group)
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
 public class IAtomicLongBench extends HazelcastTestSupport {
 
-   private static final int CONSUMERS = 8;
+   private static final int CONSUMERS = 16;
 
    private static final AtomicInteger THREAD_INDEX = new AtomicInteger(0);
 
@@ -61,7 +62,7 @@ public class IAtomicLongBench extends HazelcastTestSupport {
       //PARTITION_OPERATION_THREAD_COUNT is the hazelcast property to be set to decide the partitions group count
       counters = new IAtomicLong[CONSUMERS];
       final Config config = getConfig();
-      config.setProperty(PARTITION_GROUP_COUNT.getName(),Integer.toString(271));
+      config.setProperty(PARTITION_COUNT.getName(),Integer.toString(MAX_PARTITION_COUNT));
       instance = createHazelcastInstanceFactory().newHazelcastInstance(config);
       final int groupSize = MAX_PARTITION_COUNT/CONSUMERS;
       for(int i = 0;i<CONSUMERS;i++) {
@@ -74,8 +75,18 @@ public class IAtomicLongBench extends HazelcastTestSupport {
    @Group("rw")
    @GroupThreads(CONSUMERS)
    public long inc(AtomicLongIndex atomicLongIndex) {
-      final int index = atomicLongIndex.index;
+      //final int index = atomicLongIndex.index;
+      final int  index = ThreadLocalRandom.current().nextInt(0,CONSUMERS);
       return counters[index].incrementAndGet();
+   }
+
+   @Benchmark
+   @Group("rw")
+   @GroupThreads(CONSUMERS)
+   public long get(AtomicLongIndex atomicLongIndex) {
+      //final int index = atomicLongIndex.index;
+      final int  index = ThreadLocalRandom.current().nextInt(0,CONSUMERS);
+      return counters[index].get();
    }
 
    @TearDown

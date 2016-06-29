@@ -23,8 +23,9 @@ import com.hazelcast.logging.Logger;
 import com.hazelcast.map.MapInterceptor;
 import com.hazelcast.spi.impl.operationexecutor.OperationRunner;
 import com.hazelcast.spi.impl.operationexecutor.impl.DefaultOperationQueue;
+import com.hazelcast.spi.impl.operationexecutor.impl.GroupLock;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationQueue;
-import com.hazelcast.spi.impl.operationexecutor.impl.PartitionGroupMappers;
+import com.hazelcast.spi.impl.operationexecutor.impl.PartitionOperationRunnerEventListener;
 import com.hazelcast.spi.impl.operationexecutor.impl.PartitionOperationThread;
 import com.hazelcast.spi.impl.operationexecutor.impl.ReentrantGroupLock;
 import com.hazelcast.spi.impl.operationexecutor.impl.WaitStrategies;
@@ -196,6 +197,18 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
         assertFalse(id2InterceptorMap.containsValue(interceptor));
     }
 
+    private static final PartitionOperationRunnerEventListener BLACK_HOLE_LISTENER = new PartitionOperationRunnerEventListener() {
+        @Override
+        public void beforeRunWith(OperationRunner partitionOperationRunner) {
+
+        }
+
+        @Override
+        public void finishedRunWith(OperationRunner partitionOperationRunner) {
+
+        }
+    };
+
     private PartitionOperationThread getPartitionOperationThread(OperationQueue queue) {
         HazelcastThreadGroup hazelcastThreadGroup = new HazelcastThreadGroup("instanceName", LOGGER, getClass().getClassLoader());
         NodeExtension nodeExtension = mock(NodeExtension.class);
@@ -204,7 +217,7 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
         OperationRunner[] operationRunners = new OperationRunner[]{operationRunner};
 
         return new PartitionOperationThread("threadName", 0, queue, LOGGER, hazelcastThreadGroup,
-                                            nodeExtension, operationRunners, WaitStrategies.Sleeping, new ReentrantGroupLock(271), PartitionGroupMappers.maps(271,271));
+                                            nodeExtension, operationRunners, WaitStrategies.Sleeping, new GroupLock(271), BLACK_HOLE_LISTENER);
     }
 
     private static class TestMapInterceptor implements MapInterceptor {

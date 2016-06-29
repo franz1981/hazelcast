@@ -140,10 +140,22 @@ public class OperationThreadTest extends OperationExecutorImpl_AbstractTest {
         });
     }
 
+    private static final PartitionOperationRunnerEventListener BLACK_HOLE_LISTENER = new PartitionOperationRunnerEventListener() {
+        @Override
+        public void beforeRunWith(OperationRunner partitionOperationRunner) {
+
+        }
+
+        @Override
+        public void finishedRunWith(OperationRunner partitionOperationRunner) {
+
+        }
+    };
+
     private PartitionOperationThread createNewOperationThread(OperationQueue mockOperationQueue) {
         ILogger mockLogger = mock(ILogger.class);
         OperationRunner[] runners = new OperationRunner[0];
-        PartitionOperationThread thread = new PartitionOperationThread("threadName", 0, mockOperationQueue, mockLogger, threadGroup, nodeExtension, runners, WaitStrategies.Sleeping, new ReentrantGroupLock(Runtime.getRuntime().availableProcessors()), PartitionGroupMappers.maskWith(Runtime.getRuntime().availableProcessors()-1));
+        PartitionOperationThread thread = new PartitionOperationThread("threadName", 0, mockOperationQueue, mockLogger, threadGroup, nodeExtension, runners, WaitStrategies.Sleeping, new GroupLock(271), BLACK_HOLE_LISTENER);
 
         return thread;
     }

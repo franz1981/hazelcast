@@ -32,9 +32,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public final class PartitionOperationThread extends OperationThread {
 
    private final OperationRunner[] partitionOperationRunners;
-   private final ReentrantGroupLock groupLock;
-   private final PartitionGroupMapper partitionGroupMapper;
+   private final GroupLock groupLock;
    private final WaitStrategy waitStrategy;
+   private final PartitionOperationRunnerEventListener partitionOperationRunnerEventListener;
+
    @SuppressFBWarnings("EI_EXPOSE_REP")
    public PartitionOperationThread(String name,
                                    int threadId,
@@ -44,12 +45,12 @@ public final class PartitionOperationThread extends OperationThread {
                                    NodeExtension nodeExtension,
                                    OperationRunner[] partitionOperationRunners,
                                    WaitStrategy waitStrategy,
-                                   ReentrantGroupLock groupLock,
-                                   PartitionGroupMapper partitionGroupMapper) {
+                                   GroupLock groupLock,
+                                   PartitionOperationRunnerEventListener partitionOperationRunnerEventListener) {
       super(name, threadId, queue, logger, threadGroup, nodeExtension, false);
+      this.partitionOperationRunnerEventListener = partitionOperationRunnerEventListener;
       this.partitionOperationRunners = partitionOperationRunners;
       this.groupLock = groupLock;
-      this.partitionGroupMapper = partitionGroupMapper;
       this.waitStrategy = waitStrategy;
    }
 
@@ -64,19 +65,20 @@ public final class PartitionOperationThread extends OperationThread {
 
    protected final void runWithCurrentRunner(final Packet packet) throws Exception {
       final int partitionId = packet.getPartitionId();
-      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
       int idleCounter = 0;
       boolean run = false;
       while (!isInterrupted() && !run) {
-         if (!groupLock.tryLock(groupId)) {
+         if (!groupLock.tryLock(partitionId)) {
             idleCounter = waitStrategy.idle(idleCounter);
          }
          else {
+            partitionOperationRunnerEventListener.beforeRunWith(currentRunner);
             try {
                super.runWithCurrentRunner(packet);
             }
             finally {
-               groupLock.unlock(groupId);
+               partitionOperationRunnerEventListener.finishedRunWith(currentRunner);
+               groupLock.unlock(partitionId);
                idleCounter = 0;
                run = true;
             }
@@ -89,19 +91,20 @@ public final class PartitionOperationThread extends OperationThread {
 
    protected final void runWithCurrentRunner(final Operation operation) {
       final int partitionId = operation.getPartitionId();
-      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
       int idleCounter = 0;
       boolean run = false;
       while (!isInterrupted() && !run) {
-         if (!groupLock.tryLock(groupId)) {
+         if (!groupLock.tryLock(partitionId)) {
             idleCounter = waitStrategy.idle(idleCounter);
          }
          else {
+            partitionOperationRunnerEventListener.beforeRunWith(currentRunner);
             try {
                super.runWithCurrentRunner(operation);
             }
             finally {
-               groupLock.unlock(groupId);
+               partitionOperationRunnerEventListener.finishedRunWith(currentRunner);
+               groupLock.unlock(partitionId);
                idleCounter = 0;
                run = true;
             }
@@ -115,19 +118,20 @@ public final class PartitionOperationThread extends OperationThread {
 
    protected final void runWithCurrentRunner(final PartitionSpecificRunnable partitionRunnable) {
       final int partitionId = partitionRunnable.getPartitionId();
-      final int groupId = partitionGroupMapper.groupIdOf(partitionId);
       int idleCounter = 0;
       boolean run = false;
       while (!isInterrupted() && !run) {
-         if (!groupLock.tryLock(groupId)) {
+         if (!groupLock.tryLock(partitionId)) {
             idleCounter = waitStrategy.idle(idleCounter);
          }
          else {
+            partitionOperationRunnerEventListener.beforeRunWith(currentRunner);
             try {
                super.runWithCurrentRunner(partitionRunnable);
             }
             finally {
-               groupLock.unlock(groupId);
+               partitionOperationRunnerEventListener.finishedRunWith(currentRunner);
+               groupLock.unlock(partitionId);
                idleCounter = 0;
                run = true;
             }
