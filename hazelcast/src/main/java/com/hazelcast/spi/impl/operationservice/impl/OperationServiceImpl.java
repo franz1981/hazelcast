@@ -44,6 +44,7 @@ import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.PacketHandler;
 import com.hazelcast.spi.impl.PartitionSpecificRunnable;
 import com.hazelcast.spi.impl.operationexecutor.OperationExecutor;
+import com.hazelcast.spi.impl.operationexecutor.OperationRunner;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationExecutorImpl;
 import com.hazelcast.spi.impl.operationexecutor.slowoperationdetector.SlowOperationDetector;
 import com.hazelcast.spi.impl.operationservice.InternalOperationService;
@@ -58,7 +59,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static com.hazelcast.internal.metrics.ProbeLevel.MANDATORY;
 import static com.hazelcast.nio.Packet.FLAG_OP;
@@ -100,12 +100,8 @@ public final class OperationServiceImpl implements InternalOperationService, Met
     private static final int CONCURRENCY_LEVEL = 16;
     private static final int ASYNC_QUEUE_CAPACITY = 100000;
     private static final long TERMINATION_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(10);
-
     final InvocationRegistry invocationRegistry;
     final OperationExecutor operationExecutor;
-
-    @Probe(name = "completedCount", level = MANDATORY)
-    final AtomicLong completedOperationsCount = new AtomicLong();
 
     @Probe(name = "operationTimeoutCount", level = MANDATORY)
     final MwCounter operationTimeoutCount = MwCounter.newMwCounter();
@@ -211,9 +207,33 @@ public final class OperationServiceImpl implements InternalOperationService, Met
         return operationExecutor.getRunningOperationCount();
     }
 
+    private static final long collectCompletedOperationsCount(final OperationRunner[] operationRunners){
+        long completedOperationsCount = 0;
+        for(OperationRunner operationRunner : operationRunners){
+            if(operationRunner!=null && operationRunner instanceof OperationRunnerImpl){
+                final OperationRunnerImpl operationRunnerImpl = (OperationRunnerImpl)operationRunner;
+                //volatile load!
+                completedOperationsCount+=operationRunnerImpl.completedOperationsCount();
+            }
+        }
+        return completedOperationsCount;
+    }
+
     @Override
+    @Probe(name = "completedCount", level = MANDATORY)
     public long getExecutedOperationCount() {
-        return completedOperationsCount.get();
+        //seems slower than the original but create much less contention!!!
+        long completedOperationsCount = 0;
+        final OperationRunner[] genericOperationRunners = operationExecutor.getGenericOperationRunners();
+        if(genericOperationRunners!=null && genericOperationRunners.length>0) {
+            completedOperationsCount += collectCompletedOperationsCount(genericOperationRunners);
+        }
+        final OperationRunner[] partitionOperationRunners = operationExecutor.getPartitionOperationRunners();
+        if(partitionOperationRunners!=null && partitionOperationRunners.length>0) {
+            completedOperationsCount += collectCompletedOperationsCount(partitionOperationRunners);
+        }
+        System.out.println(completedOperationsCount);
+        return completedOperationsCount;
     }
 
     @Override

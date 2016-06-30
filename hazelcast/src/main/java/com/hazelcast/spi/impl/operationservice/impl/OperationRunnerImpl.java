@@ -130,10 +130,53 @@ abstract class InternalPartitionOperationRunnerImpl extends L1PadOperationRunner
 
 }
 
+abstract class L2PadOperationRunnerImpl extends InternalPartitionOperationRunnerImpl{
+
+   long l00,l01,l02,l03,l04,l05,l06;
+   long l10,l11,l12,l13,l14,l15,l16,l17;
+
+   L2PadOperationRunnerImpl(OperationServiceImpl operationService, int partitionId){
+      super(operationService,partitionId);
+
+   }
+}
+
+abstract class CompletedOperationsCountOperationRunnerImpl extends L2PadOperationRunnerImpl{
+
+   private static final long COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET;
+
+   static{
+      try {
+         COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET = UNSAFE.objectFieldOffset(CompletedOperationsCountOperationRunnerImpl.class.getDeclaredField("completedOperationsCount"));
+      } catch (NoSuchFieldException e) {
+         throw new RuntimeException(e);
+      }
+
+   }
+
+   private long completedOperationsCount;
+
+   CompletedOperationsCountOperationRunnerImpl(OperationServiceImpl operationService, int partitionId){
+      super(operationService,partitionId);
+   }
+
+   protected final long loadPlainCompletedOperationsCount(){
+      return completedOperationsCount;
+   }
+
+   protected final void storeOrderedCompletedOperationCount(long value){
+      UNSAFE.putOrderedLong(this, COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET, value);
+   }
+
+   public final long completedOperationsCount(){
+      return UNSAFE.getLongVolatile(this, COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET);
+   }
+}
+
 /**
  * Responsible for processing an Operation.
  */
-final class OperationRunnerImpl extends InternalPartitionOperationRunnerImpl {
+final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerImpl {
 
    static final int AD_HOC_PARTITION_ID = -2;
    long l00,l01,l02,l03,l04,l05,l06;
@@ -142,9 +185,6 @@ final class OperationRunnerImpl extends InternalPartitionOperationRunnerImpl {
    OperationRunnerImpl(OperationServiceImpl operationService, int partitionId) {
       super(operationService,partitionId);
    }
-
-
-
 
    @Override
    public void provideMetrics(MetricsRegistry metricsRegistry) {
@@ -181,7 +221,7 @@ final class OperationRunnerImpl extends InternalPartitionOperationRunnerImpl {
       if (count != null) {
          count.inc();
       }
-      operationService.completedOperationsCount.incrementAndGet();
+
       final Object localCurrentTask = loadPlainCurrentTask();
       final int partitionId = getPartitionId();
       final boolean publishCurrentTask = publishTask(localCurrentTask, partitionId);
@@ -213,6 +253,8 @@ final class OperationRunnerImpl extends InternalPartitionOperationRunnerImpl {
          handleOperationError(operation, e);
       }
       finally {
+         final long completedOperationsCount = loadPlainCompletedOperationsCount();
+         storeOrderedCompletedOperationCount(completedOperationsCount+1);
          if (publishCurrentTask) {
             storeOrderedCurrentTask(null);
          }
