@@ -232,7 +232,6 @@ public final class OperationServiceImpl implements InternalOperationService, Met
         if(partitionOperationRunners!=null && partitionOperationRunners.length>0) {
             completedOperationsCount += collectCompletedOperationsCount(partitionOperationRunners);
         }
-        System.out.println(completedOperationsCount);
         return completedOperationsCount;
     }
 
