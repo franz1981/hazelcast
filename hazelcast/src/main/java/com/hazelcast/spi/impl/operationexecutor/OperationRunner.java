@@ -16,9 +16,16 @@
 
 package com.hazelcast.spi.impl.operationexecutor;
 
+import java.lang.reflect.Field;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+
 import com.hazelcast.nio.Packet;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationExecutorImpl;
+import sun.misc.Unsafe;
+
+import static com.hazelcast.util.ExceptionUtil.rethrow;
 
 /**
  * The OperationRunner is responsible for the actual running of operations.
@@ -32,22 +39,98 @@ import com.hazelcast.spi.impl.operationexecutor.impl.OperationExecutorImpl;
  * on and this makes it possible to hook on all kinds of additional functionality like detecting slow operations, sampling which
  * operations are executed most frequently, check if an operation is still running, etc etc.
  */
-public abstract class OperationRunner {
 
+abstract class L0PadOperationRunner {
+
+    private static Unsafe findUnsafe() {
+        try {
+            return Unsafe.getUnsafe();
+        }
+        catch (SecurityException se) {
+            return AccessController.doPrivileged(new PrivilegedAction<Unsafe>() {
+                @Override
+                public Unsafe run() {
+                    try {
+                        Class<Unsafe> type = Unsafe.class;
+                        try {
+                            Field field = type.getDeclaredField("theUnsafe");
+                            field.setAccessible(true);
+                            return type.cast(field.get(type));
+                        }
+                        catch (Exception e) {
+                            for (Field field : type.getDeclaredFields()) {
+                                if (type.isAssignableFrom(field.getType())) {
+                                    field.setAccessible(true);
+                                    return type.cast(field.get(type));
+                                }
+                            }
+                        }
+                    }
+                    catch (Throwable t) {
+                        throw rethrow(t);
+                    }
+                    throw new RuntimeException("Unsafe unavailable");
+                }
+            });
+        }
+    }
+
+    protected static final Unsafe UNSAFE;
+
+    static{
+        UNSAFE = findUnsafe();
+    }
+
+    long l00,l01,l02,l03,l04,l05;
+    long l10,l11,l12,l13,l14,l15,l16,l17;
+}
+
+abstract class ColdFieldsOperationRunner extends L0PadOperationRunner{
     protected final int partitionId;
-    protected volatile Object currentTask;
 
-    private volatile Thread currentThread;
-
-    public OperationRunner(int partitionId) {
+    public ColdFieldsOperationRunner(int partitionId){
         this.partitionId = partitionId;
     }
 
-    public abstract void run(Packet packet) throws Exception;
+    /**
+     * Returns the partitionId this OperationRunner is responsible for. If the partition id is smaller than 0,
+     * it is either a generic or ad hoc OperationRunner.
+     * <p/>
+     * The value will never change for this OperationRunner instance.
+     *
+     * @return the partition id.
+     */
+    public final int getPartitionId() {
+        return partitionId;
+    }
+}
 
-    public abstract void run(Runnable task);
+abstract class L1PadOperationRunner extends ColdFieldsOperationRunner{
+    long l00,l01,l02,l03,l04,l05,l06;
+    long l10,l11,l12,l13,l14,l15,l16,l17;
 
-    public abstract void run(Operation task);
+    public L1PadOperationRunner(int partitionId){
+        super(partitionId);
+    }
+}
+
+abstract class CurrentTaskFieldsOperationRunner extends L1PadOperationRunner{
+    private static final long CURRENT_TASK_FIELD_OFFSET;
+
+    static{
+        try {
+            CURRENT_TASK_FIELD_OFFSET = UNSAFE.objectFieldOffset(CurrentTaskFieldsOperationRunner.class.getDeclaredField("currentTask"));
+        } catch (NoSuchFieldException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    private Object currentTask;
+
+    public CurrentTaskFieldsOperationRunner(int partitionId){
+        super(partitionId);
+    }
 
     /**
      * Returns the current task that is executing. This value could be null if no operation is executing.
@@ -60,7 +143,45 @@ public abstract class OperationRunner {
      * @return the current running task.
      */
     public final Object currentTask() {
+        return UNSAFE.getObjectVolatile(this,CURRENT_TASK_FIELD_OFFSET);
+    }
+
+    protected final Object loadPlainCurrentTask(){
         return currentTask;
+    }
+
+    protected final void storeOrderedCurrentTask(final Object task){
+        UNSAFE.putOrderedObject(this,CURRENT_TASK_FIELD_OFFSET,task);
+    }
+}
+
+
+abstract class L2PadOperationRunner extends CurrentTaskFieldsOperationRunner{
+    long l00,l01,l02,l03,l04,l05,l06;
+    long l10,l11,l12,l13,l14,l15,l16,l17;
+
+    public L2PadOperationRunner(int partitionId){
+        super(partitionId);
+    }
+}
+
+
+abstract class CurrentThreadOperationRunner extends L2PadOperationRunner{
+    private Thread currentThread;
+
+    private static final long CURRENT_THREAD_FIELD_OFFSET;
+
+    static{
+        try {
+            CURRENT_THREAD_FIELD_OFFSET = UNSAFE.objectFieldOffset(CurrentThreadOperationRunner.class.getDeclaredField("currentThread"));
+        } catch (NoSuchFieldException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    public CurrentThreadOperationRunner(int partitionId){
+        super(partitionId);
     }
 
     /**
@@ -72,7 +193,7 @@ public abstract class OperationRunner {
      * @param currentThread the current Thread. Can be called with 'null', clearing the currentThread field.
      */
     public final void setCurrentThread(Thread currentThread) {
-        this.currentThread = currentThread;
+        storeOrderedCurrentThread(currentThread);
     }
 
     /**
@@ -100,18 +221,33 @@ public abstract class OperationRunner {
      * @return the Thread that currently is running this OperationRunner instance.
      */
     public final Thread currentThread() {
+        return (Thread)UNSAFE.getObjectVolatile(this,CURRENT_THREAD_FIELD_OFFSET);
+    }
+
+    protected final Object loadPlainCurrentThread(){
         return currentThread;
     }
 
-    /**
-     * Returns the partitionId this OperationRunner is responsible for. If the partition id is smaller than 0,
-     * it is either a generic or ad hoc OperationRunner.
-     * <p/>
-     * The value will never change for this OperationRunner instance.
-     *
-     * @return the partition id.
-     */
-    public final int getPartitionId() {
-        return partitionId;
+    protected final void storeOrderedCurrentThread(final Thread thread){
+        UNSAFE.putOrderedObject(this,CURRENT_THREAD_FIELD_OFFSET,thread);
     }
+
+}
+
+public abstract class OperationRunner extends CurrentThreadOperationRunner{
+
+    long l00,l01,l02,l03,l04,l05,l06;
+    long l10,l11,l12,l13,l14,l15,l16,l17;
+
+    public OperationRunner(int partitionId) {
+        super(partitionId);
+    }
+
+    public abstract void run(Packet packet) throws Exception;
+
+    public abstract void run(Runnable task);
+
+    public abstract void run(Operation task);
+
+
 }
