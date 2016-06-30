@@ -30,7 +30,7 @@ import static com.hazelcast.spi.properties.GroupProperty.PARTITION_COUNT;
 @OutputTimeUnit(TimeUnit.SECONDS)
 public class IAtomicLongBench extends HazelcastTestSupport {
 
-   private static final int CONSUMERS = 16;
+   private static final int CONSUMERS = 4;
 
    private static final AtomicInteger THREAD_INDEX = new AtomicInteger(0);
 
@@ -75,11 +75,12 @@ public class IAtomicLongBench extends HazelcastTestSupport {
    @Group("rw")
    @GroupThreads(CONSUMERS)
    public long inc(AtomicLongIndex atomicLongIndex) {
-      //final int index = atomicLongIndex.index;
-      final int  index = ThreadLocalRandom.current().nextInt(0,CONSUMERS);
+      final int index = atomicLongIndex.index;
+      //final int  index = ThreadLocalRandom.current().nextInt(0,CONSUMERS);
       return counters[index].incrementAndGet();
    }
 
+   /**
    @Benchmark
    @Group("rw")
    @GroupThreads(CONSUMERS)
@@ -88,6 +89,7 @@ public class IAtomicLongBench extends HazelcastTestSupport {
       final int  index = ThreadLocalRandom.current().nextInt(0,CONSUMERS);
       return counters[index].get();
    }
+    **/
 
    @TearDown
    public void close(){
