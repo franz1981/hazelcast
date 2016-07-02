@@ -168,6 +168,16 @@ abstract class CompletedOperationsCountOperationRunnerImpl extends L2PadOperatio
       UNSAFE.putOrderedLong(this, COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET, value);
    }
 
+   /**
+    * Returns the current count of completed executed operations..
+    * <p/>
+    * Value could be stale as soon as it is returned.
+    * <p/>
+    * This method has meaningful values only for runners that hasn't contended operation executions (partitionId!=AD_HOC_PARTITION_ID)
+    *
+    *
+    * @return the current running task.
+    */
    public final long completedOperationsCount(){
       return UNSAFE.getLongVolatile(this, COMPLETED_OPERATIONS_COUNT_FIELD_OFFSET);
    }
@@ -221,7 +231,6 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
       if (count != null) {
          count.inc();
       }
-
       final Object localCurrentTask = loadPlainCurrentTask();
       final int partitionId = getPartitionId();
       final boolean publishCurrentTask = publishTask(localCurrentTask, partitionId);
@@ -253,8 +262,10 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
          handleOperationError(operation, e);
       }
       finally {
-         final long completedOperationsCount = loadPlainCompletedOperationsCount();
-         storeOrderedCompletedOperationCount(completedOperationsCount+1);
+         if(partitionId!=AD_HOC_PARTITION_ID) {
+            final long completedOperationsCount = loadPlainCompletedOperationsCount();
+            storeOrderedCompletedOperationCount(completedOperationsCount + 1);
+         }
          if (publishCurrentTask) {
             storeOrderedCurrentTask(null);
          }

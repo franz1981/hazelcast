@@ -137,7 +137,7 @@ abstract class CurrentTaskFieldsOperationRunner extends L1PadOperationRunner{
      * <p/>
      * Value could be stale as soon as it is returned.
      * <p/>
-     * This method is thread-safe; so the thread that executes a task will set/unset the current task,
+     * This method is thread-safe as long as the single-writer principle is applied to it: so the thread that executes a task will set/unset the current task,
      * any other thread in the system is allowed to read it.
      *
      * @return the current running task.
@@ -187,7 +187,8 @@ abstract class CurrentThreadOperationRunner extends L2PadOperationRunner{
     /**
      * Sets the thread that is running this OperationRunner instance.
      * <p/>
-     * This method should only be called from the {@link OperationExecutor} since this component is responsible for
+     * This method is thread-safe as long as the single-writer principle is applied to it and it should only be
+     * called from the {@link OperationExecutor} since this component is responsible for
      * executing operations on an OperationRunner.
      *
      * @param currentThread the current Thread. Can be called with 'null', clearing the currentThread field.
