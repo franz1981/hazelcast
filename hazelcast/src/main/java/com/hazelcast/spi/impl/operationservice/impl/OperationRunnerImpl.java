@@ -205,9 +205,7 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
 
    @Override
    public void run(Runnable task) {
-      final Object localCurrentTask = loadPlainCurrentTask();
-      final int partitionId = getPartitionId();
-      final boolean publishCurrentTask = publishTask(localCurrentTask, partitionId);
+      final boolean publishCurrentTask = publishTask();
       if (publishCurrentTask) {
          storeOrderedCurrentTask(task);
       }
@@ -221,9 +219,16 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
       }
    }
 
-   private static boolean publishTask(final Object task, final int partitionId) {
+   private boolean publishTask() {
+      if(getPartitionId()==AD_HOC_PARTITION_ID) {
+         return false;
+      }
+      final Object task = loadPlainCurrentTask();
+      if(task==null){
+         return true;
+      }
       final boolean isClientRunnable = task instanceof MessageTask;
-      return (partitionId != AD_HOC_PARTITION_ID && (task == null || isClientRunnable));
+      return isClientRunnable;
    }
 
    @Override
@@ -231,9 +236,7 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
       if (count != null) {
          count.inc();
       }
-      final Object localCurrentTask = loadPlainCurrentTask();
-      final int partitionId = getPartitionId();
-      final boolean publishCurrentTask = publishTask(localCurrentTask, partitionId);
+      final boolean publishCurrentTask = publishTask();
       if (publishCurrentTask) {
          storeOrderedCurrentTask(operation);
       }
@@ -262,7 +265,7 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
          handleOperationError(operation, e);
       }
       finally {
-         if(partitionId!=AD_HOC_PARTITION_ID) {
+         if(getPartitionId()!=AD_HOC_PARTITION_ID) {
             final long completedOperationsCount = loadPlainCompletedOperationsCount();
             storeOrderedCompletedOperationCount(completedOperationsCount + 1);
          }
@@ -453,9 +456,7 @@ final class OperationRunnerImpl extends CompletedOperationsCountOperationRunnerI
 
    @Override
    public void run(Packet packet) throws Exception {
-      final Object localCurrentTask = loadPlainCurrentTask();
-      final int partitionId = getPartitionId();
-      final boolean publishCurrentTask = publishTask(localCurrentTask, partitionId);
+      final boolean publishCurrentTask = publishTask();
       if (publishCurrentTask) {
          storeOrderedCurrentTask(packet);
       }
